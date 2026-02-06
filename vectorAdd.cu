@@ -1,13 +1,8 @@
 #include <cstdio>
+#include <cstdlib>
+#include <cstddef>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
-#include <stdio.h>
-#include <stdlib.h>
-
-// Parameter Definitions
-// #define TOTAL_SIZE 1024*1024*400 // Total elements in the vector
-// #define CHUNK_SIZE 1024*1024*400 // Chunk size for each kernel launch
-// #define BLOCK_SIZE 256 // Number of threads per block
 
 // Macro for checking CUDA errors
 #define cudaCheckError(ans) { gpuAssert((ans), __FILE__, __LINE__); }
@@ -32,12 +27,12 @@ inline void gpuKernelAssert(const char *file, int line, bool abort = true) {
         if (abort) exit(err);
     }}
 
-// Kernel
-__global__ void vectorAdd(int *a, int *b, int *c, int chunkSize) {
+// Declare the kernel
+__global__ void vectorAdd(int *a, int *b, int *c, int n) {
     int i = threadIdx.x + blockIdx.x * blockDim.x;
     
     // Ensure we don't go out of bounds
-    if (i < chunkSize) {
+    if (i < n) {
         c[i] = a[i] + b[i];
     }
 }
@@ -48,79 +43,63 @@ void random_inst(int *x, int size) {
     }
 }
 
+// Declare the main function
 int main() {
-    // Define vector size, chunk size, and block size
-    long long total_size;
-    int chunk_size;
+    // Define vector size and block size
+    int n;
     int block_size;
 
-    printf("Enter total size: ");
-    scanf("%lld", &total_size);
-
-    printf("Enter chunk size: ");
-    scanf("%d", &chunk_size);
-
+    // Receive inputs from the user
+    printf("Enter vector size: ");
+    scanf("%d", &n);
     printf("Enter block size: ");
     scanf("%d", &block_size);
+    
+    size_t bytes = n * sizeof(int); // Size of each vector in bytes
+    
+    // Initialize and allocate host vectors
+    int *h_a = (int*)malloc(bytes);
+    int *h_b = (int*)malloc(bytes);
+    int *h_c = (int*)malloc(bytes);
+    
+    // Populate the chunks with random data
+    random_inst(h_a, n);
+    random_inst(h_b, n);
 
-    // Allocate memory space
-    int *chunk_a, *chunk_b, *chunk_c; // Host vectors
+    // Initialize and allocate device vectors
     int *d_a, *d_b, *d_c; // Device vectors 
-    size_t chunkSizeBytes = chunk_size * sizeof(int); // Size of each vector in bytes
+    cudaCheckError(cudaMalloc((void**)&d_a, bytes));
+    cudaCheckError(cudaMalloc((void**)&d_b, bytes));
+    cudaCheckError(cudaMalloc((void**)&d_c, bytes));
 
-    // Allocate and initialize host vectors
-    chunk_a = (int*)malloc(chunkSizeBytes);
-    chunk_b = (int*)malloc(chunkSizeBytes);
-    chunk_c = (int*)malloc(chunkSizeBytes);
-
-    // Allocate memory on the GPU
-    cudaCheckError(cudaMalloc((void**)&d_a, chunkSizeBytes));
-    cudaCheckError(cudaMalloc((void**)&d_b, chunkSizeBytes));
-    cudaCheckError(cudaMalloc((void**)&d_c, chunkSizeBytes));
-
-    int numBlocks = (chunk_size + block_size - 1) / block_size; // Calculate the number of blocks for the kernel
-
+    // Copy vectors to the GPU
+    cudaCheckError(cudaMemcpy(d_a, h_a, bytes, cudaMemcpyHostToDevice));
+    cudaCheckError(cudaMemcpy(d_b, h_b, bytes, cudaMemcpyHostToDevice));
+    
     // Create events for timing
     cudaEvent_t start, stop;
     cudaCheckError(cudaEventCreate(&start));
     cudaCheckError(cudaEventCreate(&stop));
+    
+    int numBlocks = (n + block_size - 1) / block_size; // Calculate the number of blocks for the kernel
+    
+    cudaFuncSetCacheConfig(vectorAdd, cudaFuncCachePreferL1); // 
 
-    // Process the vector in chunks
-    for (long long offset = 0; offset < total_size; offset += chunk_size) {
-        int currentChunkSize = chunk_size; // Calculate the current chunk size
+    cudaCheckError(cudaEventRecord(start)); // Start recording
+    
+    vectorAdd <<< numBlocks, block_size >>> (d_a, d_b, d_c, n); // Launch the kernel
+    
+    gpuKernelCheck();
+    
+    cudaCheckError(cudaEventRecord(stop)); // Stop recording
+    cudaCheckError(cudaEventSynchronize(stop)); // Synchronize event
 
-        if (offset + chunk_size > total_size) {
-            currentChunkSize = total_size - offset;
-        }
+    // Calculate and print the execution time
+    float milliseconds = 0;
+    cudaCheckError(cudaEventElapsedTime(&milliseconds, start, stop));
+    printf("Time elapsed: %f ms\n", milliseconds);
 
-        printf("Offset: %lld, current chunk size: %d, number of blocks: %d\n", offset, currentChunkSize, numBlocks);
-
-        // Populate the chunks with random data
-        random_inst(chunk_a, currentChunkSize);
-        random_inst(chunk_b, currentChunkSize);
-
-        // Copy chunks to the GPU
-        cudaCheckError(cudaMemcpy(d_a, chunk_a, currentChunkSize * sizeof(int), cudaMemcpyHostToDevice));
-        cudaCheckError(cudaMemcpy(d_b, chunk_b, currentChunkSize * sizeof(int), cudaMemcpyHostToDevice));
-        
-        cudaCheckError(cudaEventRecord(start)); // Start recording
-        
-        vectorAdd <<< numBlocks, block_size >>> (d_a, d_b, d_c, currentChunkSize); // Launch the kernel
-        
-        gpuKernelCheck();
-        
-        cudaCheckError(cudaEventRecord(stop)); // Stop recording
-
-        cudaCheckError(cudaEventSynchronize(stop)); // Synchronize event
-
-        float milliseconds = 0;
-        
-        // Calculate and print the execution time
-        cudaCheckError(cudaEventElapsedTime(&milliseconds, start, stop));
-        printf("Time elapsed: %f ms\n", milliseconds);
-
-        cudaCheckError(cudaMemcpy(chunk_c, d_c, currentChunkSize * sizeof(int), cudaMemcpyDeviceToHost)); // Copy the result back to the host
-    }
+    cudaCheckError(cudaMemcpy(h_c, d_c, bytes, cudaMemcpyDeviceToHost)); // Copy the result back to the host
 
     // Destroy events
     cudaCheckError(cudaEventDestroy(start));
@@ -129,17 +108,18 @@ int main() {
     // Print the elements and their results
     printf("\nElements & Results:\n");
     for (int i = 0; i < 100; i++) {
-        printf("Element %d: %d + %d = %d\n", i, chunk_a[i], chunk_b[i], chunk_c[i]);
+        printf("Element %d: %d + %d = %d\n", i, h_a[i], h_b[i], h_c[i]);
     }
 
-    // Cleanup
+    // Free device memory
     cudaCheckError(cudaFree(d_a));
     cudaCheckError(cudaFree(d_b));
     cudaCheckError(cudaFree(d_c));
 
-    free(chunk_a);
-    free(chunk_b);
-    free(chunk_c);  
+    // Free host memory
+    free(h_a);
+    free(h_b);
+    free(h_c);  
 
     cudaCheckError(cudaDeviceSynchronize()); // Synchronize with the CPU
 
