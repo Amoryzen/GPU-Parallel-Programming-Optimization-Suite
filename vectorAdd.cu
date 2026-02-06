@@ -5,9 +5,9 @@
 #include <stdlib.h>
 
 // Parameter Definitions
-#define TOTAL_SIZE 1024*1024*400 // Total elements in the vector
-#define CHUNK_SIZE 1024*1024*400 // Chunk size for each kernel launch
-#define BLOCK_SIZE 256 // Number of threads per block
+// #define TOTAL_SIZE 1024*1024*400 // Total elements in the vector
+// #define CHUNK_SIZE 1024*1024*400 // Chunk size for each kernel launch
+// #define BLOCK_SIZE 256 // Number of threads per block
 
 // Macro for checking CUDA errors
 #define cudaCheckError(ans) { gpuAssert((ans), __FILE__, __LINE__); }
@@ -49,10 +49,24 @@ void random_inst(int *x, int size) {
 }
 
 int main() {
+    // Define vector size, chunk size, and block size
+    long long total_size;
+    int chunk_size;
+    int block_size;
+
+    printf("Enter total size: ");
+    scanf("%lld", &total_size);
+
+    printf("Enter chunk size: ");
+    scanf("%d", &chunk_size);
+
+    printf("Enter block size: ");
+    scanf("%d", &block_size);
+
     // Allocate memory space
     int *chunk_a, *chunk_b, *chunk_c; // Host vectors
     int *d_a, *d_b, *d_c; // Device vectors 
-    size_t chunkSizeBytes = CHUNK_SIZE * sizeof(int); // Size of each vector in bytes
+    size_t chunkSizeBytes = chunk_size * sizeof(int); // Size of each vector in bytes
 
     // Allocate and initialize host vectors
     chunk_a = (int*)malloc(chunkSizeBytes);
@@ -64,7 +78,7 @@ int main() {
     cudaCheckError(cudaMalloc((void**)&d_b, chunkSizeBytes));
     cudaCheckError(cudaMalloc((void**)&d_c, chunkSizeBytes));
 
-    int numBlocks = (CHUNK_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE; // Calculate the number of blocks for the kernel
+    int numBlocks = (chunk_size + block_size - 1) / block_size; // Calculate the number of blocks for the kernel
 
     // Create events for timing
     cudaEvent_t start, stop;
@@ -72,11 +86,11 @@ int main() {
     cudaCheckError(cudaEventCreate(&stop));
 
     // Process the vector in chunks
-    for (long long offset = 0; offset < TOTAL_SIZE; offset += CHUNK_SIZE) {
-        int currentChunkSize = CHUNK_SIZE; // Calculate the current chunk size
+    for (long long offset = 0; offset < total_size; offset += chunk_size) {
+        int currentChunkSize = chunk_size; // Calculate the current chunk size
 
-        if (offset + CHUNK_SIZE > TOTAL_SIZE) {
-            currentChunkSize = TOTAL_SIZE - offset;
+        if (offset + chunk_size > total_size) {
+            currentChunkSize = total_size - offset;
         }
 
         printf("Offset: %lld, current chunk size: %d, number of blocks: %d\n", offset, currentChunkSize, numBlocks);
@@ -91,7 +105,7 @@ int main() {
         
         cudaCheckError(cudaEventRecord(start)); // Start recording
         
-        vectorAdd <<< numBlocks, BLOCK_SIZE >>> (d_a, d_b, d_c, currentChunkSize); // Launch the kernel
+        vectorAdd <<< numBlocks, block_size >>> (d_a, d_b, d_c, currentChunkSize); // Launch the kernel
         
         gpuKernelCheck();
         
