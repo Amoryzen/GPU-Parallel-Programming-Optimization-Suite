@@ -1,0 +1,4 @@
+--cuda-path=D:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.1
+--cuda-gpu-arch=sm_86
+-I
+D:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.1/include
