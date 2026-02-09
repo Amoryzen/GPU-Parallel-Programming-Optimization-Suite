@@ -27,8 +27,15 @@ inline void gpuKernelAssert(const char *file, int line, bool abort = true) {
 
 __global__ void reduce_in_place(float *input, int n) {
     int tid = threadIdx.x;
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int index = 2 * blockIdx.x * blockDim.x + threadIdx.x;
 
+    // Check bounds to ensure we don't access memory outside 'n'
+    if (index + blockDim.x < n) {
+        input[index] += input[index + blockDim.x];
+    }
+
+    __syncthreads();
+    
     // Perform in-place reduction within each block using Sequential Addressing
     // Stride starts at half the block size and decreases by half each iteration
     for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
