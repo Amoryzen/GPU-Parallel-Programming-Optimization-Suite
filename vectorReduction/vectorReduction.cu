@@ -26,33 +26,31 @@ inline void gpuKernelAssert(const char *file, int line, bool abort = true) {
 }
 
 __global__ void reduce_in_place(float *input, int n) {
+    __shared__ float shared[256]; // Shared memory for each block
+    
     int tid = threadIdx.x;
     int index = 2 * blockIdx.x * blockDim.x + threadIdx.x;
 
-    // Check bounds to ensure we don't access memory outside 'n'
-    if (index + blockDim.x < n) {
-        input[index] += input[index + blockDim.x];
-    }
-
+    // Load input elements into shared memory
+    shared[tid] = (index < n ? input[index] : 0.0f) + (index + blockDim.x < n ? input[index + blockDim.x] : 0.0f);
     __syncthreads();
     
     // Perform in-place reduction within each block using Sequential Addressing
     // Stride starts at half the block size and decreases by half each iteration
     for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-        __syncthreads(); // Wait for all threads to finish
-
         // Only the first 'stride' threads are active
         if (tid < stride) {
             // Check bounds to ensure we don't access memory outside 'n'
             if (index + stride < n) {
-                input[index] += input[index + stride]; 
+                shared[tid] += shared[tid + stride]; 
             }
         }
+        __syncthreads();
     }
 
     // Write the result of this block to the first element of the block
     if (tid == 0) {
-        input[blockIdx.x] = input[index];
+        input[blockIdx.x] = shared[0];
     }
 }
 
@@ -87,7 +85,8 @@ int main() {
 
     // Launch the reduction kernel multiple times
     int block_size = 256; // Number of threads per block
-    int grid_size = (n + block_size - 1) / block_size; // Number of blocks
+    int grid_size = (n + 2 * block_size - 1) / (2 * block_size); // Number of blocks
+    size_t shared_mem_size = block_size * sizeof(float); // Shared memory size per block
 
     float total_sum = cpu_reduce(h_input, n); // Calculate the sum on the host
     printf("Total sum (CPU): %f\n", total_sum);
@@ -95,16 +94,16 @@ int main() {
     // Perform iterative reduction until only one block remains
     while (grid_size > 1) {
         // Launch kernel
-        reduce_in_place <<< grid_size, block_size >>> (d_input, n);
+        reduce_in_place <<< grid_size, block_size, shared_mem_size >>> (d_input, n);
         cudaCheckError(cudaDeviceSynchronize()); // Synchronize with the CPU
 
         // Update n and grid size for the next iteration
         n = grid_size;
-        grid_size = (grid_size + block_size - 1) / block_size;
+        grid_size = (n + 2 * block_size - 1) / (2 * block_size);
     }
     
     // Final reduction when grid_size is 1
-    reduce_in_place <<< 1, block_size >>> (d_input, n);
+    reduce_in_place <<< 1, block_size, shared_mem_size >>> (d_input, n);
     cudaCheckError(cudaDeviceSynchronize()); // Synchronize with the CPU
 
     gpuKernelCheck();    
