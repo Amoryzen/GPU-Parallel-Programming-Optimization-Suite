@@ -25,6 +25,16 @@ inline void gpuKernelAssert(const char *file, int line, bool abort = true) {
     }
 }
 
+// Function to perform warp-level reduction
+__device__ void warpReduce(volatile float *sdata, int tid) {
+    sdata[tid] += sdata[tid + 32];
+    sdata[tid] += sdata[tid + 16];
+    sdata[tid] += sdata[tid + 8];
+    sdata[tid] += sdata[tid + 4];
+    sdata[tid] += sdata[tid + 2];
+    sdata[tid] += sdata[tid + 1];
+}
+
 __global__ void reduce_in_place(float *input, int n) {
     __shared__ float shared[256]; // Shared memory for each block
     
@@ -36,29 +46,30 @@ __global__ void reduce_in_place(float *input, int n) {
     __syncthreads();
     
     // Perform in-place reduction within each block using Sequential Addressing
-    // Stride starts at half the block size and decreases by half each iteration
-    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-        // Only the first 'stride' threads are active
+    for (int stride = blockDim.x / 2; stride > 32; stride >>= 1) {
         if (tid < stride) {
-            // Check bounds to ensure we don't access memory outside 'n'
-            if (index + stride < n) {
-                shared[tid] += shared[tid + stride]; 
-            }
+            shared[tid] += shared[tid + stride]; 
         }
+
         __syncthreads();
     }
 
-    // Write the result of this block to the first element of the block
+    // Unroll the last warp to avoid synchronization overhead
+    if (tid < 32) {
+        warpReduce(shared, tid);
+    }
+
+    // Write the result of this block to global memory
     if (tid == 0) {
         input[blockIdx.x] = shared[0];
     }
 }
 
 // Function to calculate the sum of an array on the host
-float cpu_reduce(float *input, int n) {
+float cpu_reduce(float *input, int size) {
     float sum = 0.0;
     
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < size; i++) {
         sum += input[i];
     }
 
@@ -78,20 +89,21 @@ int main() {
         h_input[i] = static_cast<float>(i+1);
     }
 
-    cudaCheckError(cudaMalloc(&d_input, bytes)); // Allocate device memory  
+    // Allocate device memory
+    cudaCheckError(cudaMalloc(&d_input, bytes)); 
 
     // Copy input vector to device
     cudaCheckError(cudaMemcpy(d_input, h_input, bytes, cudaMemcpyHostToDevice));    
 
-    // Launch the reduction kernel multiple times
-    int block_size = 256; // Number of threads per block
-    int grid_size = (n + 2 * block_size - 1) / (2 * block_size); // Number of blocks
-    size_t shared_mem_size = block_size * sizeof(float); // Shared memory size per block
+    // Launch parameters
+    int block_size = 256; 
+    int grid_size = (n + 2 * block_size - 1) / (2 * block_size); 
+    size_t shared_mem_size = block_size * sizeof(float); // This isn't actually used in kernel call since we declared __shared__ inside
 
-    float total_sum = cpu_reduce(h_input, n); // Calculate the sum on the host
+    float total_sum = cpu_reduce(h_input, n); 
     printf("Total sum (CPU): %f\n", total_sum);
 
-    // Perform iterative reduction until only one block remains
+    // Perform iterative reduction
     while (grid_size > 1) {
         // Launch kernel
         reduce_in_place <<< grid_size, block_size, shared_mem_size >>> (d_input, n);
