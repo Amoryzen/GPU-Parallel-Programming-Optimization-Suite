@@ -1,6 +1,4 @@
 #include <cstdio>
-#include <cstdlib>
-#include <cstddef>
 #include <cuda_runtime.h>
 
 // Macro for checking CUDA errors
@@ -26,42 +24,44 @@ inline void gpuKernelAssert(const char *file, int line, bool abort = true) {
 }
 
 // Function to perform warp-level reduction
-__device__ void warpReduce(volatile float *sdata, int tid) {
-    sdata[tid] += sdata[tid + 32];
-    sdata[tid] += sdata[tid + 16];
-    sdata[tid] += sdata[tid + 8];
-    sdata[tid] += sdata[tid + 4];
-    sdata[tid] += sdata[tid + 2];
-    sdata[tid] += sdata[tid + 1];
+__inline__ __device__ void warpReduce(float val) {
+    for (int offset = warpSize >> 1; offset > 0; offset >>= 1) {
+        val += __shfl_down_sync(0xffffffff, val, offset);
+    }
 }
 
-__global__ void reduce_in_place(float *input, int n) {
-    __shared__ float shared[256]; // Shared memory for each block
-    
+__global__ void reduce_with_warp_optimization(float *input, int n) {
+    extern __shared__ float shared[]; // Shared memory for each block
     int tid = threadIdx.x;
-    int index = 2 * blockIdx.x * blockDim.x + threadIdx.x;
+    int index = 2 * blockIdx.x * blockDim.x + tid;
+    float sum = 0.0f;
 
-    // Load input elements into shared memory
-    shared[tid] = (index < n ? input[index] : 0.0f) + (index + blockDim.x < n ? input[index + blockDim.x] : 0.0f);
-    __syncthreads();
-    
+    sum = (index < n ? input[index] : 0.0f) + (index + blockDim.x < n ? input[index + blockDim.x] : 0.0f); // Load two elements from global memory into register
+
     // Perform in-place reduction within each block using Sequential Addressing
-    for (int stride = blockDim.x / 2; stride > 32; stride >>= 1) {
-        if (tid < stride) {
-            shared[tid] += shared[tid + stride]; 
-        }
-
-        __syncthreads();
+    for (int offset =  warpSize >> 1; offset > 0; offset >>= 1) {
+        sum += __shfl_down_sync(0xffffffff, sum, offset);
     }
 
-    // Unroll the last warp to avoid synchronization overhead
-    if (tid < 32) {
-        warpReduce(shared, tid);
+    // Write the result of each warp to shared memory
+    if (tid % warpSize == 0) {
+        shared[tid / warpSize] = sum;
+    }
+
+    __syncthreads();
+
+    // Perform warp-level reduction on the shared memory
+    if (tid < warpSize) {
+        sum = (tid < (blockDim.x / warpSize)) ? shared[tid] : 0.0f;
+        
+        for (int offset =  warpSize >> 1; offset > 0; offset >>= 1) {
+            sum += __shfl_down_sync(0xffffffff, sum, offset);
+        }
     }
 
     // Write the result of this block to global memory
     if (tid == 0) {
-        input[blockIdx.x] = shared[0];
+        input[blockIdx.x] = sum;
     }
 }
 
@@ -98,7 +98,7 @@ int main() {
     // Launch parameters
     int block_size = 256; 
     int grid_size = (n + 2 * block_size - 1) / (2 * block_size); 
-    size_t shared_mem_size = block_size * sizeof(float); // This isn't actually used in kernel call since we declared __shared__ inside
+    size_t shared_mem_size = (block_size / 32) * sizeof(float); // This isn't actually used in kernel call since we declared __shared__ inside
 
     float total_sum = cpu_reduce(h_input, n); 
     printf("Total sum (CPU): %f\n", total_sum);
@@ -106,7 +106,7 @@ int main() {
     // Perform iterative reduction
     while (grid_size > 1) {
         // Launch kernel
-        reduce_in_place <<< grid_size, block_size, shared_mem_size >>> (d_input, n);
+        reduce_with_warp_optimization <<< grid_size, block_size, shared_mem_size >>> (d_input, n);
         cudaCheckError(cudaDeviceSynchronize()); // Synchronize with the CPU
 
         // Update n and grid size for the next iteration
@@ -115,7 +115,7 @@ int main() {
     }
     
     // Final reduction when grid_size is 1
-    reduce_in_place <<< 1, block_size, shared_mem_size >>> (d_input, n);
+    reduce_with_warp_optimization <<< 1, block_size, shared_mem_size >>> (d_input, n);
     cudaCheckError(cudaDeviceSynchronize()); // Synchronize with the CPU
 
     gpuKernelCheck();    
