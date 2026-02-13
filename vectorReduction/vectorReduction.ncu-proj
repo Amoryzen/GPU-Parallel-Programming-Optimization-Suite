@@ -1,6 +1,9 @@
 {
     "extension": "ncu-proj",
     "files": [
+        {
+            "path": "vectorReduction.ncu-rep"
+        }
     ],
     "launcher": {
         "activity/interactiveprofile/booststate": "Auto",
@@ -60,8 +63,8 @@
         "activity/profile/sourcefolders": "",
         "activity/profile/targetprocesses": "All",
         "activity/profile/warpsamplesperinterval": 0,
-        "activity/systemtrace/target/command_line": "\"D:/Users/Rafi Ananta Alden/Documents/CUDA/vectorReduction.exe\" ",
-        "activity/systemtrace/target/process_name": "D:/Users/Rafi Ananta Alden/Documents/CUDA/vectorReduction.exe",
+        "activity/systemtrace/target/command_line": "\"D:/Users/Rafi Ananta Alden/Documents/CUDA/vectorReduction/vectorReduction.exe\" ",
+        "activity/systemtrace/target/process_name": "D:/Users/Rafi Ananta Alden/Documents/CUDA/vectorReduction/vectorReduction.exe",
         "platform/linux (x86_64)/device": "",
         "platform/linux/arguments": "",
         "platform/linux/environment": "",
@@ -69,10 +72,10 @@
         "platform/linux/workingdir": "",
         "platform/win32/arguments": "",
         "platform/win32/environment": "",
-        "platform/win32/executable": "D:/Users/Rafi Ananta Alden/Documents/CUDA/vectorReduction.exe",
+        "platform/win32/executable": "D:/Users/Rafi Ananta Alden/Documents/CUDA/vectorReduction/vectorReduction.exe",
         "platform/win32/workingdir": "",
         "platform/windows/device": "localhost"
     },
-    "uuid": "{603e5467-6179-4c28-a7e0-12817cec5b4c}",
+    "uuid": "{636f0b46-3737-4ac9-a3a7-4d4e682e1e62}",
     "version": "1.0"
 }
