@@ -4,7 +4,8 @@
             "name": "CUDA",
             "includePath": [
                 "${workspaceFolder}/**",
-                "D:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.1/include"
+                "D:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.1/include",
+                "${workspaceFolder}/cutlass/include"
             ],
             "defines": [
                 "_DEBUG",
@@ -20,7 +21,8 @@
         {
             "name": "WSL",
             "includePath": [
-                "${workspaceFolder}/**"
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/cutlass/include"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",
