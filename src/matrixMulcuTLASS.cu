@@ -1,12 +1,13 @@
 // Include standard libraries
 #include <cstddef>
+#include <cstdio>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
-#include <iostream>
-#include <sstream>
 #include <vector>
 
-#include "cutlass/gemm/device/gemm.h" // NOLINT Include CUTLASS GEMM device code
+#include "cutlass/gemm/device/gemm.h"
+#include "cutlass/gemm_coord.h"
+#include "cutlass/layout/matrix.h"
 
 // Define a CUTLASS GEMM template and launch a GEMM kernel
 cudaError_t CUTLASS_GEMM(int M, int N, int K, float alpha, float *const A,
@@ -58,7 +59,7 @@ __global__ void InitMatrix(float *matrix, int rows, int columns, int seed = 0) {
     // Generate arbitrary elements
     int const k = 16807;
     int const m = 16;
-    float value = float(((offset + seed) * k % m) - m / 2);
+    float value = float(((offset + seed) * k % m) - m / 2.0f);
 
     matrix[offset] = value;
   }
@@ -87,9 +88,7 @@ cudaError_t AllocateMatrix(float **matrix, int rows, int columns,
 
   // Check if the allocation was successful
   if (result != cudaSuccess) {
-    std::cerr << "Failed to allocate matrix: " << cudaGetErrorString(result)
-              << std::endl;
-
+    printf("Failed to allocate matrix: %s\n", cudaGetErrorString(result));
     return result;
   }
 
@@ -97,9 +96,8 @@ cudaError_t AllocateMatrix(float **matrix, int rows, int columns,
 
   // Check if the clearing was successful
   if (result != cudaSuccess) {
-    std::cerr << "Failed to clear matrix device memory: "
-              << cudaGetErrorString(result) << std::endl;
-
+    printf("Failed to clear matrix device memory: %s\n",
+           cudaGetErrorString(result));
     return result;
   }
 
@@ -109,9 +107,7 @@ cudaError_t AllocateMatrix(float **matrix, int rows, int columns,
 
   // Check if the initialization was successful
   if (result != cudaSuccess) {
-    std::cerr << "Failed to initialize matrix: " << cudaGetErrorString(result)
-              << std::endl;
-
+    printf("Failed to initialize matrix: %s\n", cudaGetErrorString(result));
     return result;
   }
 
@@ -174,25 +170,20 @@ cudaError_t TestCUTLASSGEMM(int M, int N, int K, float alpha, float beta) {
   // Allocate matrices in the GPU device memory with arbitrary seeds
   result = AllocateMatrix(&A, M, K);
   if (result != cudaSuccess) {
-    std::cerr << "Failed to allocate matrix A: " << cudaGetErrorString(result)
-              << std::endl;
-
+    printf("Failed to allocate matrix A: %s\n", cudaGetErrorString(result));
     return result;
   }
 
   result = AllocateMatrix(&B, K, N);
   if (result != cudaSuccess) {
-    std::cerr << "Failed to allocate matrix B: " << cudaGetErrorString(result)
-              << std::endl;
-
+    printf("Failed to allocate matrix B: %s\n", cudaGetErrorString(result));
     return result;
   }
 
   result = AllocateMatrix(&C_cutlass, M, N);
   if (result != cudaSuccess) {
-    std::cerr << "Failed to allocate matrix C_cutlass: "
-              << cudaGetErrorString(result) << std::endl;
-
+    printf("Failed to allocate matrix C_cutlass: %s\n",
+           cudaGetErrorString(result));
     cudaFree(A);
     cudaFree(B);
 
@@ -201,9 +192,8 @@ cudaError_t TestCUTLASSGEMM(int M, int N, int K, float alpha, float beta) {
 
   result = AllocateMatrix(&C_naive, M, N);
   if (result != cudaSuccess) {
-    std::cerr << "Failed to allocate matrix C_naive: "
-              << cudaGetErrorString(result) << std::endl;
-
+    printf("Failed to allocate matrix C_naive: %s\n",
+           cudaGetErrorString(result));
     cudaFree(A);
     cudaFree(B);
     cudaFree(C_cutlass);
@@ -213,8 +203,7 @@ cudaError_t TestCUTLASSGEMM(int M, int N, int K, float alpha, float beta) {
 
   result = cudaMemcpy(C_naive, C_cutlass, size_of_C, cudaMemcpyDeviceToDevice);
   if (result != cudaSuccess) {
-    std::cerr << "Failed to copy matrix C_naive: " << cudaGetErrorString(result)
-              << std::endl;
+    printf("Failed to copy matrix C_naive: %s\n", cudaGetErrorString(result));
 
     cudaFree(A);
     cudaFree(B);
@@ -227,8 +216,8 @@ cudaError_t TestCUTLASSGEMM(int M, int N, int K, float alpha, float beta) {
   // Call a single-precision CUTLASS GEMM kernel
   result = CUTLASS_GEMM(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc);
   if (result != cudaSuccess) {
-    std::cerr << "Failed to call CUTLASS GEMM kernel: "
-              << cudaGetErrorString(result) << std::endl;
+    printf("Failed to call CUTLASS GEMM kernel: %s\n",
+           cudaGetErrorString(result));
 
     cudaFree(A);
     cudaFree(B);
@@ -243,8 +232,8 @@ cudaError_t TestCUTLASSGEMM(int M, int N, int K, float alpha, float beta) {
   result =
       NaiveGEMMOnDevice(M, N, K, alpha, A, lda, B, ldb, beta, C_naive, ldc);
   if (result != cudaSuccess) {
-    std::cerr << "Failed to call Naive GEMM kernel: "
-              << cudaGetErrorString(result) << std::endl;
+    printf("Failed to call Naive GEMM kernel: %s\n",
+           cudaGetErrorString(result));
 
     cudaFree(A);
     cudaFree(B);
@@ -261,8 +250,8 @@ cudaError_t TestCUTLASSGEMM(int M, int N, int K, float alpha, float beta) {
   result = cudaMemcpy(host_cutlass.data(), C_cutlass, size_of_C,
                       cudaMemcpyDeviceToHost);
   if (result != cudaSuccess) {
-    std::cerr << "Failed to copy C_cutlass matrix to host: "
-              << cudaGetErrorString(result) << std::endl;
+    printf("Failed to copy C_cutlass matrix to host: %s\n",
+           cudaGetErrorString(result));
 
     cudaFree(A);
     cudaFree(B);
@@ -275,8 +264,8 @@ cudaError_t TestCUTLASSGEMM(int M, int N, int K, float alpha, float beta) {
   result =
       cudaMemcpy(host_naive.data(), C_naive, size_of_C, cudaMemcpyDeviceToHost);
   if (result != cudaSuccess) {
-    std::cerr << "Failed to copy C_naive matrix to host: "
-              << cudaGetErrorString(result) << std::endl;
+    printf("Failed to copy C_naive matrix to host: %s\n",
+           cudaGetErrorString(result));
 
     cudaFree(A);
     cudaFree(B);
@@ -287,8 +276,7 @@ cudaError_t TestCUTLASSGEMM(int M, int N, int K, float alpha, float beta) {
   }
 
   if (host_cutlass != host_naive) {
-    std::cerr << "CUTLASS GEMM results do not match naive GEMM results!"
-              << std::endl;
+    printf("CUTLASS GEMM results do not match naive GEMM results!\n");
 
     cudaFree(A);
     cudaFree(B);
@@ -307,41 +295,56 @@ cudaError_t TestCUTLASSGEMM(int M, int N, int K, float alpha, float beta) {
   return result;
 }
 
-int main(int argc, const char *argv[]) {
-  // Parse the command line arguments to obtain GEMM dimensions and scalar
-  // values
-  int problem[3] = {1024, 1024, 1024};
+int main() {
+  int M, N, K;
+  float alpha, beta;
 
-  for (int i = 1; i < argc && i < 4; i++) {
-    std::stringstream ss(argv[i]);
-    ss >> problem[i - 1];
+  printf("Enter M: "); // M = 2048 for 100% occupancy
+  if (scanf("%d", &M) != 1) {
+    printf("Error reading M.\n");
+    return 1;
   }
 
-  float scalars[2] = {
-      1, 0}; // Scalars used for linear scaling the result of the matrix product
+  printf("Enter N: "); // N = 2048 for 100% occupancy
+  if (scanf("%d", &N) != 1) {
+    printf("Error reading N.\n");
+    return 1;
+  }
 
-  for (int i = 4; i < argc && i < 6; i++) {
-    std::stringstream ss(argv[i]);
-    ss >> scalars[i - 4];
+  printf("Enter K: "); // K = 2048 for 100% occupancy
+  if (scanf("%d", &K) != 1) {
+    printf("Error reading K.\n");
+    return 1;
+  }
+
+  printf("Enter alpha: "); // alpha = 1.0 for 100% occupancy
+  if (scanf("%f", &alpha) != 1) {
+    printf("Error reading alpha.\n");
+    return 1;
+  }
+
+  printf("Enter beta: "); // beta = 0.0 for 100% occupancy
+  if (scanf("%f", &beta) != 1) {
+    printf("Error reading beta.\n");
+    return 1;
   }
 
   // Run the CUTLASS GEMM test
-  cudaError_t result = TestCUTLASSGEMM(problem[0], // GEMM M dimension
-                                       problem[1], // GEMM N dimension
-                                       problem[2], // GEMM K dimension
-                                       scalars[0], // GEMM alpha scalar
-                                       scalars[1]  // GEMM beta scalar
+  cudaError_t result = TestCUTLASSGEMM(M,     // GEMM M dimension
+                                       N,     // GEMM N dimension
+                                       K,     // GEMM K dimension
+                                       alpha, // GEMM alpha scalar
+                                       beta   // GEMM beta scalar
   );
 
   if (result != cudaSuccess) {
-    std::cerr << "CUTLASS GEMM test failed: " << cudaGetErrorString(result)
-              << std::endl;
+    printf("CUTLASS GEMM test failed: %s\n", cudaGetErrorString(result));
 
     return 1;
   }
 
   if (result == cudaSuccess) {
-    std::cout << "CUTLASS GEMM test PASSED" << std::endl;
+    printf("CUTLASS GEMM test PASSED\n");
   }
 
   return result == cudaSuccess ? 0 : 1;

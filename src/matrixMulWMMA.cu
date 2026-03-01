@@ -1,15 +1,47 @@
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cuda_fp16.h>
-#include <iostream>
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
 #include <mma.h>
 
 using namespace nvcuda::wmma;
 
-// Define matrix dimension 'N' (must be multiply of 16)
-#ifndef N
-#define N 512
-#endif
+// Macro for checking CUDA errors
+#define cudaCheckError(ans)                                                    \
+  {                                                                            \
+    gpuAssert((ans), __FILE__, __LINE__);                                      \
+  }
+
+inline void gpuAssert(cudaError_t code, const char *file, int line,
+                      bool abort = true) {
+  if (code != cudaSuccess) {
+    fprintf(stderr, "GPU assert: %s %s %d\n", cudaGetErrorString(code), file,
+            line);
+
+    if (abort)
+      exit(code);
+  }
+}
+
+// Macro for checking kernel errors
+#define gpuKernelCheck()                                                       \
+  {                                                                            \
+    gpuKernelAssert(__FILE__, __LINE__);                                       \
+  }
+
+inline void gpuKernelAssert(const char *file, int line, bool abort = true) {
+  cudaError_t err = cudaGetLastError();
+
+  if (err != cudaSuccess) {
+    fprintf(stderr, "Kernel launch failed: %s %s %d\n", cudaGetErrorString(err),
+            file, line);
+
+    if (abort)
+      exit(err);
+  }
+}
 
 #define TILE_SIZE 16
 
@@ -18,8 +50,9 @@ using namespace nvcuda::wmma;
 // Each warp computes a 16x16 tile in the output
 __global__ void matrixMulGPU(const half *A, const half *B, float *C, int n) {
   int warps_per_block =
-      blockDim.x / 32;               // warps_per_block = 4 if blockDim.x = 128
-  int warp_id = threadIdx.x / 32;    // Global warp ID
+      blockDim.x / 32; // warps_per_block = 4 if blockDim.x = 128
+  int warp_id =
+      (blockIdx.x * warps_per_block) + (threadIdx.x / 32); // Global warp ID
   int tiles_per_dim = n / TILE_SIZE; // Number of tiles per dimension
   int tile_count = tiles_per_dim * tiles_per_dim; // Total number of tiles
 
@@ -82,9 +115,17 @@ void matrixMulCPU(const half *A, const half *B, float *C, int n) {
 }
 
 int main() {
+  int N;
+
+  printf("Enter N: "); // N = 2048 for 100% occupancy
+  if (scanf("%d", &N) != 1) {
+    printf("Error reading N.\n");
+    return 1;
+  }
+
   // N must be a multiple of 16
   if (N % TILE_SIZE != 0) {
-    std::cerr << "N must be a multiple of 16!" << std::endl;
+    printf("N must be a multiple of %d!\n", TILE_SIZE);
     return 1;
   }
 
@@ -110,14 +151,15 @@ int main() {
   half *d_B = nullptr;
   float *d_C = nullptr;
 
-  cudaMalloc(&d_A, bytes_a_or_b);
-  cudaMalloc(&d_B, bytes_a_or_b);
-  cudaMalloc(&d_C, bytes_c);
+  cudaCheckError(cudaMalloc(&d_A, bytes_a_or_b));
+  cudaCheckError(cudaMalloc(&d_B, bytes_a_or_b));
+  cudaCheckError(cudaMalloc(&d_C, bytes_c));
 
   // Copy data from host to device
-  cudaMemcpy(d_A, h_A, bytes_a_or_b, cudaMemcpyHostToDevice);
-  cudaMemcpy(d_B, h_B, bytes_a_or_b, cudaMemcpyHostToDevice);
-  cudaMemset(d_C, 0, bytes_c); // Initialize device memory to zero
+  cudaCheckError(cudaMemcpy(d_A, h_A, bytes_a_or_b, cudaMemcpyHostToDevice));
+  cudaCheckError(cudaMemcpy(d_B, h_B, bytes_a_or_b, cudaMemcpyHostToDevice));
+  cudaCheckError(
+      cudaMemset(d_C, 0, bytes_c)); // Initialize device memory to zero
 
   // Compute grid/block configuration
   //  - 128 threads => 4 warps per block
@@ -134,31 +176,30 @@ int main() {
   matrixMulGPU<<<grid_size, block_size>>>(d_A, d_B, d_C,
                                           N); // Launch the GPU kernel
 
-  cudaDeviceSynchronize();
+  cudaCheckError(cudaDeviceSynchronize());
 
-  cudaMemcpy(h_C_gpu, d_C, bytes_c,
-             cudaMemcpyDeviceToHost); // Copy result from device to host
+  cudaCheckError(
+      cudaMemcpy(h_C_gpu, d_C, bytes_c,
+                 cudaMemcpyDeviceToHost)); // Copy result from device to host
 
   matrixMulCPU(h_A, h_B, h_C_cpu, N); // Run CPU kernel for comparison
 
   // Compare the first 10 elements of the result
-  std::cout << "Matrix multiplication (FP16 x FP16 -> FP32) completed!"
-            << std::endl;
-  std::cout << "Comparing the first 10 elements of the result (CPU vs GPU):"
-            << std::endl;
+  printf("Matrix multiplication (FP16 x FP16 -> FP32) completed!\n");
+  printf("Comparing the first 10 elements of the result (CPU vs GPU):\n");
 
   for (int i = 0; i < 10; i++) {
     float val_cpu = h_C_cpu[i];
     float val_gpu = h_C_gpu[i];
 
-    std::cout << "h_C_gpu[" << i << "] = " << val_gpu << std::endl;
-    std::cout << "h_C_cpu[" << i << "] = " << val_cpu << std::endl;
+    printf("h_C_gpu[%d] = %f\n", i, val_gpu);
+    printf("h_C_cpu[%d] = %f\n", i, val_cpu);
   }
 
   // Free device memory
-  cudaFree(d_A);
-  cudaFree(d_B);
-  cudaFree(d_C);
+  cudaCheckError(cudaFree(d_A));
+  cudaCheckError(cudaFree(d_B));
+  cudaCheckError(cudaFree(d_C));
 
   // Free host memory
   free(h_A);
