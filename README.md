@@ -1,4 +1,4 @@
-# Mastering GPU Parallel Programming with CUDA
+# GPU Parallel Programming Optimization Suite
 
 A comprehensive collection of CUDA C++ examples demonstrating fundamental to advanced GPU acceleration techniques, focusing on memory management, kernel optimization, and high-performance libraries.
 
